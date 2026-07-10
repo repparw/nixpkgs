@@ -21,11 +21,11 @@
 
 stdenv.mkDerivation rec {
   pname = "tasks-org";
-  version = "15.7.1";
+  version = "15.7.3";
 
   src = fetchurl {
     url = "https://github.com/tasks/tasks/releases/download/${version}/tasks-org-${version}-linux-amd64.tar.gz";
-    hash = "sha256-L7WC7o2dTYG31ZKyVRcKwWFg4shhK4SZDCE7nGByGDc=";
+    hash = lib.fakeHash;
   };
 
   strictDeps = true;
