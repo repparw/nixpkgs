@@ -1,0 +1,16 @@
+name: tasks-org-prefetch
+
+on:
+  pull_request:
+
+jobs:
+  prefetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compute source hash
+        run: |
+          curl -L --fail -o source.tar.gz \
+            https://github.com/tasks/tasks/releases/download/15.7.3/tasks-org-15.7.3-linux-amd64.tar.gz
+          printf 'sha256-'
+          openssl dgst -sha256 -binary source.tar.gz | base64 -w0
+          printf '\n'
