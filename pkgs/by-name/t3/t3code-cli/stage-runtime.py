@@ -68,6 +68,18 @@ class RuntimeStager:
                 raise FileNotFoundError(f"{manifest['name']} needs missing {name} at {child}")
             self.package(child, target_context / name)
 
+        # These binaries are loaded by computed paths rather than static
+        # imports. Upstream stages the same platform packages separately.
+        sidecars = {
+            "@cursor/sdk": ("@cursor", "sdk-"),
+            "@ff-labs/fff-node": ("@ff-labs", "fff-bin-"),
+        }
+        if manifest.get("name") in sidecars:
+            scope, prefix = sidecars[manifest["name"]]
+            for sibling in sorted((context / scope).glob(prefix + "*")):
+                if sibling.exists():
+                    self.package(sibling, target_context / scope / sibling.name)
+
     def run(self, roots: list[str]):
         for name in roots:
             self.package(
