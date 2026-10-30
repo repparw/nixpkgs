@@ -29,6 +29,7 @@ class RuntimeStagerTest(unittest.TestCase):
 
             root = package("@cursor+sdk@1", "@cursor/sdk", {"dep": "^1"})
             dep1 = package("dep@1", "dep", {"loop": "1"})
+            native = package("@cursor+sdk-linux-x64@1", "@cursor/sdk-linux-x64")
             package("dep@2", "dep")
             loop = package("loop@1", "loop", {"dep": "^1"})
             package("unrelated@1", "unrelated")
@@ -38,6 +39,7 @@ class RuntimeStagerTest(unittest.TestCase):
                 src.symlink_to(target)
 
             link(store / "@cursor+sdk@1/node_modules/dep", dep1)
+            link(store / "@cursor+sdk@1/node_modules/@cursor/sdk-linux-x64", native)
             link(store / "dep@1/node_modules/loop", loop)
             link(store / "loop@1/node_modules/dep", dep1)
             link(source / "apps/server/node_modules/@cursor/sdk", root)
@@ -54,6 +56,9 @@ class RuntimeStagerTest(unittest.TestCase):
             )
             self.assertTrue(
                 (output / "node_modules/.pnpm/dep@1/node_modules/loop").exists()
+            )
+            self.assertTrue(
+                (output / "node_modules/.pnpm/@cursor+sdk@1/node_modules/@cursor/sdk-linux-x64").exists()
             )
             self.assertFalse((output / "node_modules/.pnpm/dep@2").exists())
             self.assertFalse((output / "node_modules/.pnpm/unrelated@1").exists())
