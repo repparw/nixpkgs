@@ -142,8 +142,25 @@ stdenv.mkDerivation (
       runHook preInstall
 
       mkdir --parents "$out"/libexec/t3code/apps/server
+      cp --recursive --no-preserve=mode apps/server/dist "$out"/libexec/t3code/apps/server
+    ''
+    + lib.optionalString (!enableDesktop) ''
+      # Use the exact external-dependency selector from the upstream bundler.
+      # Copy only its pnpm dependency closure, not the entire monorepo's
+      # node_modules. The virtual-store contexts preserve peer resolution.
+      node --experimental-strip-types --input-type=module -e '
+        import fs from "node:fs";
+        import { selectCliRuntimeExternalDependencies } from "./scripts/lib/cli-external-packages.ts";
+        const server = JSON.parse(fs.readFileSync("apps/server/package.json", "utf8"));
+        const externals = selectCliRuntimeExternalDependencies(server.dependencies);
+        fs.writeFileSync("cli-runtime-roots.json", JSON.stringify(Object.keys(externals)));
+      '
+      python3 ${./stage-runtime.py} "$PWD" "$out/libexec/t3code" cli-runtime-roots.json
+    ''
+    + lib.optionalString enableDesktop ''
+      # Electron still needs its original workspace dependency tree.
       cp --recursive --no-preserve=mode node_modules "$out"/libexec/t3code
-      cp --recursive --no-preserve=mode apps/server/{node_modules,dist} "$out"/libexec/t3code/apps/server
+      cp --recursive --no-preserve=mode apps/server/node_modules "$out"/libexec/t3code/apps/server
     ''
     + lib.optionalString enableDesktop ''
       mkdir --parents "$out"/libexec/t3code/apps/desktop
