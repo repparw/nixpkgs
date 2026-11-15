@@ -32,6 +32,7 @@
 
   vulkanSupport ? false,
   shaderc,
+  spirv-headers,
   vulkan-headers,
   vulkan-loader,
 
@@ -59,7 +60,7 @@
 
 rustPlatform.buildRustPackage (finalAttrs: {
   pname = "voxtype";
-  version = "1.1.1";
+  version = "1.2.2";
 
   __structuredAttrs = true;
 
@@ -67,16 +68,19 @@ rustPlatform.buildRustPackage (finalAttrs: {
     owner = "peteonrails";
     repo = "voxtype";
     tag = "v${finalAttrs.version}";
-    hash = "sha256-7Djbq7nUIqL3afCEYKnPWtRnx4jXBvhY4iA1m/4w8Ak=";
+    hash = "sha256-9gXDvLS35we9aSqHoFYcG4Yby9mNRlKxjG+c4hGQqIM=";
   };
 
-  # The lock file pins openvino-genai to a git fork whose openvino-sys crate
-  # carries a submodule with a symlink loop, which fetchCargoVendor cannot
-  # copy. The fork only matters for the openvino-whisper feature, which is not
-  # built here, so resolve it from crates.io instead.
-  cargoPatches = [ ./openvino-genai-from-crates-io.patch ];
-
-  cargoHash = "sha256-/3EINM6XjftYdi8B2/WQ+62vhOC/wX4x156IjXLmNv8=";
+  # The optional OpenVINO git dependency vendors a symlink cycle in
+  # thirdparty. Drop that unused tree rather than modifying Cargo.lock.
+  # The OpenVINO Whisper engine is not part of these package variants.
+  cargoDeps = rustPlatform.fetchCargoVendor {
+    inherit (finalAttrs) pname version src;
+    postBuild = ''
+      rm -r $out/git/*/crates/openvino-sys/upstream/thirdparty
+    '';
+    hash = "sha256-8ogR2P1EqfAHqPkj5AuVc9tjWQ6cYEtOVzH22WFa31c=";
+  };
 
   buildFeatures =
     [ ]
@@ -122,6 +126,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
     ]
   )
   ++ lib.optionals vulkanSupport [
+    spirv-headers
     vulkan-headers
     vulkan-loader
   ]
@@ -145,18 +150,64 @@ rustPlatform.buildRustPackage (finalAttrs: {
     AMDGPU_TARGETS = rocmGpuTargets;
   };
 
+  # whisper-rs-sys 0.15.0's ggml Vulkan generator retains a future per shader.
+  # Compile synchronously, and reject missing SPIR-V rather than failing to
+  # link hundreds of undefined matmul_* symbols on resource-limited builders.
+  postPatch = lib.optionalString vulkanSupport ''
+    shaderGen="$cargoDepsCopy/source-registry-0/whisper-rs-sys-0.15.0/whisper.cpp/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp"
+    test -f "$shaderGen"
+    substituteInPlace "$shaderGen" \
+      --replace-fail \
+      '    compiles.push_back(std::async(
+            string_to_spv_func, name, input_filepath, out_path, defines, coopmat, generate_dep_file, std::move(slot)));' \
+      '    string_to_spv_func(name, input_filepath, out_path, defines, coopmat, generate_dep_file, std::move(slot));'
+    substituteInPlace "$shaderGen" \
+      --replace-fail \
+      '            if (data.empty()) {
+                    continue;
+                }' \
+      '            if (data.empty()) {
+                    throw std::runtime_error("Missing compiled Vulkan shader: " + name + " (" + path + ")");
+                }'
+    substituteInPlace "$shaderGen" \
+      --replace-fail \
+      'std::cerr << "\n\n" << stderr_str << std::endl;' \
+      'std::cerr << "\n\n" << stderr_str << std::endl; throw std::runtime_error("Vulkan shader compilation failed: " + name);'
+    substituteInPlace "$shaderGen" \
+      --replace-fail \
+      'std::cerr << "Error executing command for " << name << ": " << e.what() << std::endl;' \
+      'std::cerr << "Error executing command for " << name << ": " << e.what() << std::endl; throw;'
+  '';
+
   preBuild = ''
-    # NOTE: whisper.cpp cmake needs some help in sandbox
+    # cmake-rs uses Cargo's job count as an explicit --parallel argument.
+    # Bound both for the shader-heavy Vulkan build.
+    ${lib.optionalString vulkanSupport "export NIX_BUILD_CORES=1"}
     export CMAKE_BUILD_PARALLEL_LEVEL=$NIX_BUILD_CORES
   ''
   + lib.optionalString vulkanSupport ''
     export VULKAN_SDK="${shaderc.bin}"
+    export Vulkan_INCLUDE_DIR="${vulkan-headers}/include"
+    export Vulkan_LIBRARY="${vulkan-loader}/lib/libvulkan.so"
   ''
   + lib.optionalString onnxSupport ''
     export ORT_LIB_LOCATION="${lib.getLib onnxruntime}/lib"
   '';
 
+  # GGUF inference is a separate workspace binary; the daemon finds it
+  # beside its executable. It must be built with the same Vulkan feature.
+  postBuild = lib.optionalString vulkanSupport ''
+    cargo build --offline --jobs 1 \
+      --target ${stdenv.hostPlatform.rust.cargoShortTarget} \
+      --profile release \
+      -p voxtype-gguf-worker --features vulkan
+  '';
+
   postInstall = ''
+    ${lib.optionalString vulkanSupport ''
+      install -Dm755 target/${stdenv.hostPlatform.rust.cargoShortTarget}/release/voxtype-gguf-worker \
+        $out/bin/voxtype-gguf-worker
+    ''}
     install -Dm644 config/default.toml \
       $out/share/voxtype/default-config.toml
 
